@@ -8,6 +8,14 @@ App de barra de menú para macOS pensada para **monitores externos genéricos** 
 - **Resolución y HiDPI** reales en monitores que macOS no ofrece en HiDPI (sin monitor virtual), mediante un archivo de *override* del sistema.
 - **Arranque automático** al iniciar sesión (SMAppService) e interruptor de encendido y apagado.
 
+## Captura
+
+<p align="center">
+  <img src="capturas/menu-app.png" alt="Menú de la app en la barra de menú: ganancia, gamma, luces con rodilla suave, HiDPI, resolución, perfil de color y arranque al iniciar sesión" width="360">
+</p>
+
+_Menú de la app con ganancia 150 %, gamma 1.25 y «Luces» 50 %. Los puntos azules marcan el valor de fábrica de cada deslizador._
+
 ## Qué hace y qué NO hace con el brillo
 
 - **Sí:** multiplica los valores de cada tono (ganancia de 80 % a 160 %) y ajusta la curva (gamma y «Luces»), de modo que la imagen se ve más brillante que con el ajuste de macOS.
