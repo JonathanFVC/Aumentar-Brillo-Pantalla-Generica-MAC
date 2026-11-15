@@ -1,0 +1,7 @@
+# binarios y salidas de compilacion
+pantalla-cli
+Pantalla
+*.app
+.DS_Store
+# archivos generados por `pantalla-cli hidpi-plist` en la carpeta actual
+/DisplayProductID-*
