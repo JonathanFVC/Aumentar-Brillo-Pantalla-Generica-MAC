@@ -2,7 +2,7 @@ import Cocoa
 import ColorSync
 import ServiceManagement
 
-// App de barra de menu (solo APIs de macOS): ganancia, perfil de color y HiDPI/resolucion de la 1ra pantalla externa.
+// App de barra de menu (APIs de macOS; una sola privada, CGSConfigureDisplayEnabled, para reconectar el monitor tras instalar o quitar los modos HiDPI): ganancia, perfil de color y HiDPI/resolucion de la 1ra pantalla externa.
 
 func activeDisplays() -> [CGDirectDisplayID] {
     var ids = [CGDirectDisplayID](repeating: 0, count: 16); var n: UInt32 = 0
@@ -19,6 +19,36 @@ func onlineDisplays() -> [CGDirectDisplayID] {
     var ids = [CGDirectDisplayID](repeating: 0, count: 16); var n: UInt32 = 0
     CGGetOnlineDisplayList(16, &ids, &n); return Array(ids.prefix(Int(n)))
 }
+
+// BEGIN reconectar
+// Reconexion por software del monitor externo (API privada CGSConfigureDisplayEnabled, la de `pantalla-cli reconectar`): lo apaga ~3 s y lo enciende
+// para que macOS vuelva a leer el override HiDPI sin tocar el cable ni reiniciar. Nunca toca la pantalla integrada; si la funcion no existe, avisa.
+nonisolated(unsafe) var reconectando = false
+func reconnect(_ id: CGDirectDisplayID, done: @escaping (Bool, String) -> Void) {
+    typealias Enable = @convention(c) (CGDisplayConfigRef?, CGDirectDisplayID, Bool) -> CGError
+    if reconectando { done(false, "ya hay una reconexión en curso"); return }
+    if CGDisplayIsBuiltin(id) != 0 { done(false, "no se aplica a la pantalla integrada"); return }
+    guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSConfigureDisplayEnabled") else { done(false, "esta versión de macOS no ofrece la función"); return }
+    let fn = unsafeBitCast(sym, to: Enable.self)
+    func set(_ on: Bool) -> CGError {
+        var cfg: CGDisplayConfigRef?
+        CGBeginDisplayConfiguration(&cfg)
+        let r = fn(cfg, id, on)
+        if r != .success { CGCancelDisplayConfiguration(cfg); return r }
+        return CGCompleteDisplayConfiguration(cfg, .forSession)
+    }
+    let a = set(false)
+    if a != .success { done(false, "macOS no apagó el monitor (error \(a.rawValue)); no se tocó nada"); return }
+    reconectando = true
+    func encender(_ intento: Int) {
+        let b = set(true)
+        if b == .success { reconectando = false; done(true, "") }
+        else if intento < 5 { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { encender(intento + 1) } }
+        else { reconectando = false; done(false, "el monitor no volvió a encenderse (error \(b.rawValue))") }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { encender(1) }
+}
+// END reconectar
 
 nonisolated(unsafe) var collected: [(String, URL)] = []
 func installedProfiles() -> [(String, URL)] {
@@ -245,12 +275,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let p = overridePath(id)
         let nuevo = p.file + ".nuevo"
         if let e = runAdmin("mkdir -p '\(p.dir)' && printf '%s' '\(b64)' | /usr/bin/base64 -D > '\(nuevo)' && chmod 644 '\(nuevo)' && mv -f '\(nuevo)' '\(p.file)'") { alert("No se instaló", e); return }
-        alert("Modos HiDPI instalados", "Reinicia la Mac (o desconecta y vuelve a conectar el monitor) para que aparezcan en HiDPI: 1856×1044, 1792×1008, 1760×990, 1680×945, 1600×900, 1440×810 y 1280×720 (1920×1080 no lo acepta macOS en este monitor).")
+        // macOS solo relee el override al reconectar el monitor: se hace solo, por software (el monitor se apaga ~3 s)
+        reconnect(id) { ok, detalle in
+            self.reapplyOnce()
+            if ok { self.alert("Modos HiDPI instalados", "El monitor se reconectó solo y ya aparecen en Resolución: 1856×1044, 1792×1008, 1760×990, 1680×945, 1600×900, 1440×810 y 1280×720. Abre el menú otra vez para elegirlos.") }
+            else { self.alert("Modos HiDPI instalados", "No se pudo reconectar el monitor solo (\(detalle)). Desconecta y vuelve a conectar el cable, o reinicia la Mac, para que aparezcan.") }
+        }
     }
     @objc func removeHiDPI() {
         guard let id = target else { return }
         if let e = runAdmin("rm -f '\(overridePath(id).file)'") { alert("No se quitó", e); return }
-        alert("Modos HiDPI quitados", "Reinicia la Mac (o reconecta el monitor) para que desaparezcan.")
+        reconnect(id) { ok, detalle in
+            self.reapplyOnce()
+            if ok { self.alert("Modos HiDPI quitados", "El monitor se reconectó solo y ya no aparecen. Abre el menú otra vez.") }
+            else { self.alert("Modos HiDPI quitados", "No se pudo reconectar el monitor solo (\(detalle)). Desconecta y vuelve a conectar el cable, o reinicia la Mac, para que desaparezcan.") }
+        }
     }
 
     @objc func toggleLogin() {
@@ -288,9 +327,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(hi)
 
         let res = NSMenuItem(title: "Resolución", action: nil, keyEquivalent: ""); let rs = NSMenu()
-        // solo tamanos 16:9 de 1280+ de ancho, a 60 Hz (los de 50 Hz parpadeaban), con las dos versiones (base y HiDPI)
-        for m in modes where !isHiDPI(m) && m.width >= 1280 && Int(m.refreshRate.rounded()) == 60 && abs(Double(m.width) / Double(m.height) - 16.0 / 9.0) < 0.01 && modes.contains(where: { sameLogical($0, m) && isHiDPI($0) }) {
-            let mi = NSMenuItem(title: "\(m.width) × \(m.height) · \(Int(m.refreshRate)) Hz", action: #selector(setResolution(_:)), keyEquivalent: ""); mi.representedObject = m
+        // solo tamanos 16:9 de 1280+ de ancho con las dos versiones (base y HiDPI), a la frecuencia MAXIMA que ofrece el monitor
+        // (75 Hz en un LF27T35, 60 Hz en el JH207, donde los 50 Hz parpadeaban); si a esa frecuencia no hay ningun tamano, baja a la siguiente
+        func sizeList(_ hz: Int) -> [CGDisplayMode] {
+            modes.filter { m in !isHiDPI(m) && m.width >= 1280 && Int(m.refreshRate.rounded()) == hz && abs(Double(m.width) / Double(m.height) - 16.0 / 9.0) < 0.01 && modes.contains(where: { sameLogical($0, m) && isHiDPI($0) }) }
+        }
+        let idealHz = Set(modes.map { Int($0.refreshRate.rounded()) }).sorted(by: >).first { !sizeList($0).isEmpty } ?? 60
+        for m in sizeList(idealHz) {
+            let mi = NSMenuItem(title: "\(m.width) × \(m.height) · \(idealHz) Hz", action: #selector(setResolution(_:)), keyEquivalent: ""); mi.representedObject = m
             if let c = cur, sameLogical(m, c) { mi.state = .on }
             rs.addItem(mi)
         }

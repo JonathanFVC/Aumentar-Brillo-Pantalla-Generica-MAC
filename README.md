@@ -1,6 +1,6 @@
 # Pantalla: más brillo percibido, perfil de color y HiDPI para monitores externos en macOS (Apple Silicon M5)
 
-App de barra de menú para macOS pensada para **monitores externos genéricos** que se conectan a una Mac con Apple Silicon y se ven más apagados de lo que el panel puede dar. Aplica una **ganancia por software** a la tabla de color de la pantalla para **subir el brillo percibido por encima del que macOS entrega por defecto**. Está hecha solo con APIs públicas de Apple (CoreGraphics, ColorSync, ServiceManagement), sin apps de terceros:
+App de barra de menú para macOS pensada para **monitores externos genéricos** que se conectan a una Mac con Apple Silicon y se ven más apagados de lo que el panel puede dar. Aplica una **ganancia por software** a la tabla de color de la pantalla para **subir el brillo percibido por encima del que macOS entrega por defecto**. Está hecha con APIs públicas de Apple (CoreGraphics, ColorSync, ServiceManagement), sin apps de terceros, salvo **una API privada** que solo se usa para reconectar el monitor tras instalar o quitar los modos HiDPI:
 
 - **Ganancia y gamma por software**, con punto azul de referencia e imán en el valor de fábrica.
 - **Control «Luces» con rodilla suave**, para que la ganancia no recorte las luces.
@@ -36,7 +36,7 @@ La firma es *ad hoc*: se compila y corre en la misma Mac (no se puede copiar a o
 
 ## Aviso
 
-Este software se ofrece **sin garantía**. Escribe un archivo en `/Library/Displays` (con tu contraseña de administrador, solo si lo pides desde el menú), cambia de forma permanente la resolución y el perfil de color de la pantalla, y la herramienta `pantalla-cli reconectar` usa una **API privada de macOS** que puede dejar un monitor apagado hasta reconectar el cable. Úsalo bajo tu responsabilidad.
+Este software se ofrece **sin garantía**. Escribe un archivo en `/Library/Displays` (con tu contraseña de administrador, solo si lo pides desde el menú), cambia de forma permanente la resolución y el perfil de color de la pantalla, y, tras instalar o quitar los modos HiDPI, la app (y la herramienta `pantalla-cli reconectar`) apaga y enciende el monitor por software con una **API privada de macOS** que puede dejarlo apagado hasta reconectar el cable; las ventanas que estaban en ese monitor pueden pasar a la otra pantalla. Úsalo bajo tu responsabilidad.
 
 ## Contenido
 
@@ -63,7 +63,7 @@ La app aparece como un icono de monitor en la barra de menú y se registra sola 
 - **Ganancia y gamma activadas**: interruptor general. Apagado, la pantalla vuelve a la tabla de fábrica.
 - **Ganancia** (80–160 %), **Gamma** (0.6–1.6) y **Luces** (0–100 %): deslizadores con punto azul en el valor de fábrica.
 - **Alta resolución (HiDPI)**: alterna entre un tamaño con y sin HiDPI. Guarda su estado.
-- **Resolución**: solo tamaños 16:9 de 1280 de ancho o más, a 60 Hz, que existen en las dos versiones (base y HiDPI).
+- **Resolución**: solo tamaños 16:9 de 1280 de ancho o más que existen en las dos versiones (base y HiDPI), a la frecuencia más alta que ofrece el monitor (60 Hz en el JH207, 75 Hz en un LF27T35); si a esa frecuencia no hay ningún tamaño, baja a la siguiente.
 - **Perfil de color**: solo perfiles RGB que no oscurecen.
 - **Abrir al iniciar sesión** y **Salir**.
 
@@ -109,7 +109,7 @@ El menú puede instalar el override (pide la contraseña de administrador). El c
 `info`, `perfiles`, `perfil <n|texto>`, `perfil-restaurar`, `modos`, `modo <n>`, `ganancia <factor> [gamma]`, `hidpi-plist [WxH ...]`, `reconectar`. Por seguridad:
 
 - Actúa sobre la primera pantalla **externa activa**. Si no hay, se niega; para tocar otra hay que pasar `--display <id>`.
-- `reconectar` **nunca** actúa sobre la pantalla integrada. Usa `CGSConfigureDisplayEnabled`, **la única API privada del proyecto**; si el monitor no reenciende hay que reconectar el cable.
+- `reconectar` **nunca** actúa sobre la pantalla integrada. Usa `CGSConfigureDisplayEnabled`, **la única API privada del proyecto**; si el monitor no reenciende hay que reconectar el cable. La app lo hace sola, una vez, al terminar «Instalar modos HiDPI» o «Quitar modos HiDPI instalados» (macOS solo relee el archivo al reconectar el monitor): el monitor se apaga unos 3 s y vuelve.
 - No usar `ganancia` mientras la app esté abierta: se pelean por la misma tabla.
 - El número de `modo <n>` cambia cuando cambia la lista de modos: conviene buscar el modo por texto.
 
@@ -123,7 +123,7 @@ El menú puede instalar el override (pide la contraseña de administrador). El c
 | Perfiles ICC | `~/Library/ColorSync/Profiles` | borrar los `.icc` |
 | Preferencias | dominio `local.pantalla.menubar` | `defaults delete local.pantalla.menubar` |
 
-La app no usa red ni APIs privadas, y en reposo gasta ~0 % de CPU: no hay temporizadores; reaplica la ganancia una sola vez tras un cambio de pantalla.
+La app no usa red; su única API privada es la reconexión del monitor (solo al instalar o quitar los modos HiDPI), y en reposo gasta ~0 % de CPU: no hay temporizadores; reaplica la ganancia una sola vez tras un cambio de pantalla.
 
 ## Trampas conocidas
 
